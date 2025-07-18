@@ -43,10 +43,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             }
             StackBase = (intptr_t*)((char*)StackBase - step);
         }
-        if (RtlUserThreadStart == 0)
-        {
-            exit(1);
-        }
         ntdll_RtlUserThreadStart = *RtlUserThreadStart;
         printf("This is dll main\n");
         printf("Get RtlUserThreadStart address: %p, Hijack main thread!\n", ntdll_RtlUserThreadStart);
