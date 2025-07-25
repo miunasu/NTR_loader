@@ -3,9 +3,11 @@
 #include <winnt.h>
 #include <stdio.h>
 
-intptr_t ntdll_RtlUserThreadStart;
-intptr_t* Ntdll_handle;
-intptr_t* Kernel32_handle;
+HANDLE ntdll_RtlUserThreadStart;
+HANDLE Ntdll_handle;
+HANDLE Kernel32_handle;
 BYTE key;
+HANDLE exe_handle;
 FARPROC WINAPI GetFunctionAddressByHash(HMODULE hMod, DWORD FuncHash);
 __declspec(dllexport) void ExportedFunction();
+void function(LPTHREAD_START_ROUTINE oep, LPVOID parameter);

